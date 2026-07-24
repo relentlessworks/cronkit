@@ -27,7 +27,7 @@ jobs:
       - name: Test
         run: go test -race ./...
       - name: Build
-        run: CGO_ENABLED=0 go build -trimpath ./cmd/cronkit
+        run: CGO_ENABLED=0 go build -trimpath -o /tmp/cronkit ./cmd/cronkit
 
   cross-compile:
     runs-on: ubuntu-latest
@@ -35,12 +35,17 @@ jobs:
     needs: check
     strategy:
       matrix:
-        target:
-          - linux/amd64
-          - linux/arm64
-          - darwin/amd64
-          - darwin/arm64
-          - windows/amd64
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -48,8 +53,8 @@ jobs:
           go-version-file: go.mod
       - name: Cross-compile
         env:
-          GOOS: ${{ matrix.target == 'linux/amd64' && 'linux' || matrix.target == 'linux/arm64' && 'linux' || matrix.target == 'darwin/amd64' && 'darwin' || matrix.target == 'darwin/arm64' && 'darwin' || 'windows' }}
-          GOARCH: ${{ matrix.target == 'linux/amd64' && 'amd64' || matrix.target == 'linux/arm64' && 'arm64' || matrix.target == 'darwin/amd64' && 'amd64' || matrix.target == 'darwin/arm64' && 'arm64' || 'amd64' }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -trimpath -ldflags "-s -w" -o cronkit-${{ matrix.target }} ./cmd/cronkit
+          go build -trimpath -ldflags "-s -w" -o cronkit-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/cronkit
