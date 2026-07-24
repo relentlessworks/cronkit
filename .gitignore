@@ -1,0 +1,5 @@
+cronkit
+cronkit-*
+data/
+*.test
+*.out
