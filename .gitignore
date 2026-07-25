@@ -1,5 +1,5 @@
-cronkit
-cronkit-*
+/cronkit
+/cronkit-*
 data/
 *.test
 *.out
