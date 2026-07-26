@@ -53,8 +53,12 @@ jobs:
       - name: Generate checksums
         working-directory: artifacts
         run: sha256sum *.tar.gz > checksums.txt
+      - name: Read version
+        id: version
+        run: echo "TAG=v$(cat VERSION)" >> $GITHUB_OUTPUT
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.TAG }}
           files: artifacts/*
           generate_release_notes: true
