@@ -629,6 +629,7 @@ func formatRunLog(log model.RunLog) string {
 }
 
 // executeJob runs a job by making an HTTP request to its URL.
+// It retries on failure up to MaxRetries times with a 2-second delay between attempts.
 func (h *Handlers) executeJob(job *model.Job) {
 	startedAt := time.Now()
 
@@ -639,42 +640,70 @@ func (h *Handlers) executeJob(job *model.Job) {
 
 	client := &http.Client{Timeout: timeout}
 
-	var bodyReader io.Reader
-	if job.Body != "" {
-		bodyReader = strings.NewReader(job.Body)
+	maxRetries := job.MaxRetries
+	if maxRetries < 0 {
+		maxRetries = 0
 	}
 
-	req, err := http.NewRequest(job.Method, job.URL, bodyReader)
-	if err != nil {
-		h.recordRunLog(job, "failed", 0, 0, err.Error(), startedAt)
-		return
+	var lastErr string
+	var lastStatusCode int
+	var totalDuration int64
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(2 * time.Second)
+		}
+
+		attemptStart := time.Now()
+
+		var bodyReader io.Reader
+		if job.Body != "" {
+			bodyReader = strings.NewReader(job.Body)
+		}
+
+		req, err := http.NewRequest(job.Method, job.URL, bodyReader)
+		if err != nil {
+			lastErr = err.Error()
+			lastStatusCode = 0
+			continue
+		}
+
+		// Set custom headers
+		for k, v := range job.Headers {
+			req.Header.Set(k, v)
+		}
+		if job.Body != "" && req.Header.Get("Content-Type") == "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := client.Do(req)
+		attemptDuration := time.Since(attemptStart).Milliseconds()
+		totalDuration += attemptDuration
+
+		if err != nil {
+			lastErr = err.Error()
+			lastStatusCode = 0
+			continue
+		}
+
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+
+		lastStatusCode = resp.StatusCode
+		lastErr = ""
+
+		if resp.StatusCode < 400 {
+			// Success — record and return
+			h.recordRunLog(job, "success", resp.StatusCode, totalDuration, "", startedAt)
+			return
+		}
+
+		// Non-2xx response — will retry if attempts remain
+		lastErr = fmt.Sprintf("HTTP %d", resp.StatusCode)
 	}
 
-	// Set custom headers
-	for k, v := range job.Headers {
-		req.Header.Set(k, v)
-	}
-	if job.Body != "" && req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := client.Do(req)
-	finishedAt := time.Now()
-	duration := finishedAt.Sub(startedAt).Milliseconds()
-
-	if err != nil {
-		h.recordRunLog(job, "failed", 0, duration, err.Error(), startedAt)
-		return
-	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-
-	status := "success"
-	if resp.StatusCode >= 400 {
-		status = "failed"
-	}
-
-	h.recordRunLog(job, status, resp.StatusCode, duration, "", startedAt)
+	// All attempts failed
+	h.recordRunLog(job, "failed", lastStatusCode, totalDuration, lastErr, startedAt)
 }
 
 func (h *Handlers) recordRunLog(job *model.Job, status string, statusCode int, durationMs int64, errMsg string, startedAt time.Time) {
